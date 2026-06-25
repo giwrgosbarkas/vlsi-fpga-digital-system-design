@@ -1,0 +1,1 @@
+This series of projects focuses on digital system design using VLSI methodologies and FPGA implementation on Zynq platforms with Vivado tools. It explores both architectural and practical aspects of modern hardware design.
