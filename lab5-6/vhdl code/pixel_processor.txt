@@ -1,0 +1,80 @@
+library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.NUMERIC_STD.ALL;
+use ieee.math_real.all;
+use work.math_utils.all;
+
+
+entity pixel_processor is
+
+generic(
+    constant bits: natural := 8;
+    constant N: natural := 32
+);
+
+  Port (
+    clk : in std_logic;
+    rst : in std_logic;
+    row, col :  in std_logic_vector(integer(ceil(log2(real(N))))-1 downto 0); -- row and column indices of the pixel being processed
+    p1, p2, p3, p4, p5, p6, p7, p8, p9 : in std_logic_vector(bits-1 downto 0); -- 3x3 pixel neighborhood around the pixel being processed, where p5 is the pixel being processed
+    R : out std_logic_vector(bits-1 downto 0);
+    G : out std_logic_vector(bits-1 downto 0);
+    B : out std_logic_vector(bits-1 downto 0)
+  );
+end pixel_processor;
+
+
+
+architecture pixel_processor_arch of pixel_processor is
+
+signal parity: std_logic_vector(1 downto 0); -- to determine pixel type based on row and column indices
+begin
+
+    parity <= row(0) & col(0); -- parity of row and column indices to determine pixel type
+
+    calculation: process(rst, clk)
+
+    begin
+
+    if (rst = '0') then 
+
+        R <= (others => '0');
+        G <= (others => '0');
+        B <= (others => '0');
+
+    elsif rising_edge(clk) then 
+        -- if pixel is green (type ii)
+        case parity is
+            when "00" =>
+                R <= std_logic_vector(resize(shift_right(unsigned("0" & p2) + unsigned("0" & p8), 1), bits));
+                G <= p5;
+                B <= std_logic_vector(resize(shift_right(unsigned("0" & p4) + unsigned("0" & p6), 1), bits));
+
+            -- if pixel is blue
+            when "01" =>
+                R <= std_logic_vector(resize(shift_right(unsigned("00" & p1) + unsigned("00" & p3) + unsigned("00" & p7) + unsigned("00" & p9), 2), bits));
+                G <= std_logic_vector(resize(shift_right(unsigned("00" & p4) + unsigned("00" & p6) + unsigned("00" & p2) + unsigned("00" & p8), 2), bits));
+                B <= p5;
+
+            -- if pixel is red
+            when "10" =>
+                R <= p5;
+                G <= std_logic_vector(resize(shift_right(unsigned("00" & p4) + unsigned("00" & p6) + unsigned("00" & p2) + unsigned("00" & p8), 2), bits));
+                B <= std_logic_vector(resize(shift_right(unsigned("00" & p1) + unsigned("00" & p3) + unsigned("00" & p7) + unsigned("00" & p9), 2), bits));
+                
+            -- if pixel is green (type i)
+            when "11" =>
+                R <= std_logic_vector(resize(shift_right(unsigned("0" & p4) + unsigned("0" & p6), 1), bits));
+                G <= p5;
+                B <= std_logic_vector(resize(shift_right(unsigned("0" & p2) + unsigned("0" & p8), 1), bits));
+
+            when others =>
+                R <= (others => '0');
+                G <= (others => '0');
+                B <= (others => '0');  
+        end case;
+    end if;
+end process;
+
+
+end pixel_processor_arch;

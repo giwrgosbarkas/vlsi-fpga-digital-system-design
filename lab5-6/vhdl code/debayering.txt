@@ -1,0 +1,182 @@
+library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.NUMERIC_STD.ALL;
+use IEEE.MATH_REAL.ALL;
+use work.math_utils.all;
+use IEEE.STD_LOGIC_UNSIGNED.ALL;
+
+entity debayering is
+    generic(
+        bits : natural := 8;
+        N    : natural := 32
+    );
+    port( 
+        clk            : in std_logic;
+        rst_n            : in std_logic;
+        new_image      : in std_logic;
+        valid_in       : in std_logic;
+        pixel          : in std_logic_vector(bits-1 downto 0);
+        image_finished : out std_logic;
+        valid_out      : out std_logic;
+        R, G, B        : out std_logic_vector(bits-1 downto 0)
+    );
+end debayering;
+
+architecture debayering_arch of debayering is
+
+    constant LATENCY    : natural := 2 * N + 2;
+    constant TOTAL_PIX  : natural := N * N;
+    constant TOTAL_TIME : natural := TOTAL_PIX + LATENCY + 3;
+    signal clka: std_logic;
+    signal enable: std_logic := '1';
+    signal p1, p2, p3, p4, p5, p6, p7, p8, p9 : std_logic_vector(bits-1 downto 0);
+    
+    constant ADDR_W : integer := integer(ceil(log2(real(N))));
+    constant CTR_W  : integer := integer(ceil(log2(real(TOTAL_TIME + 1))));
+
+
+    signal row_sig, col_sig : std_logic_vector(ADDR_W-1 downto 0) := (others => '0');
+    signal cycles_counter   : unsigned(CTR_W-1 downto 0);
+    
+    type state_type is (IDLE, RECEIVING, FLUSHING, DONE);
+    signal state : state_type := IDLE;
+    component serial_parallel is
+        generic ( bits : natural; N : natural );
+        Port (
+        
+            clk, rst  : in std_logic;
+            pixel_in  : in std_logic_vector(bits-1 downto 0);
+            valid_in  : in std_logic;
+            new_image : in std_logic;
+            row, col  : in std_logic_vector(ADDR_W-1 downto 0);
+            counter   : in std_logic_vector(CTR_W-1 downto 0);
+            p1, p2, p3, p4, p5, p6, p7, p8, p9 : out std_logic_vector(bits-1 downto 0)
+          
+ 
+        );
+    end component;
+
+    component pixel_processor is
+        generic ( bits : natural; N : natural );
+        Port (
+            clk, rst  : in std_logic;
+            row, col  : in std_logic_vector(ADDR_W-1 downto 0);
+     
+            p1, p2, p3, p4, p5, p6, p7, p8, p9 : in std_logic_vector(bits-1 downto 0);
+            R, G, B   : out std_logic_vector(bits-1 downto 0)
+        );
+    end component;
+
+begin
+
+    clka <= clk and enable;   
+    
+     
+ main :process(clk, rst_n)
+    begin
+    
+        if valid_in = '0' and cycles_counter > "0000000000"  and cycles_counter < "0000011111" then
+           enable <= '0';
+           
+       else 
+           enable <= '1'; 
+              
+       end if;
+   
+        if rst_n = '0' then
+           cycles_counter <= (others => '0');
+            enable <= '0';    
+            row_sig        <= (others => '0');
+            col_sig        <= (others => '0');
+            state          <= IDLE;  
+       
+      
+            
+        elsif rising_edge(clk) then
+            case state is
+                when IDLE =>
+                    cycles_counter <= (others => '0');
+                    row_sig        <= (others => '0');
+                    col_sig        <= (others => '0');
+                   if valid_in = '1' or new_image = '1' then
+                        state <= RECEIVING; 
+                    end if;
+
+                when RECEIVING =>                          
+                    
+                    if valid_in = '1' or cycles_counter >= TOTAL_PIX then 
+                    cycles_counter <= cycles_counter + 1;
+                    end if;
+                    
+                    if cycles_counter = TOTAL_PIX - 1 then
+                        state <= FLUSHING;
+                    end if;
+                    
+                when FLUSHING =>
+                    if valid_in = '1' or cycles_counter >= TOTAL_PIX then
+                    cycles_counter <= cycles_counter + 1;
+                    end if;
+                    if cycles_counter = TOTAL_TIME - 1 then
+                        state <= DONE;
+                    end if;
+
+                when DONE =>
+                    state <= DONE;
+                
+                    
+                when others =>
+                    state <= IDLE;
+            end case;
+
+            if (state = RECEIVING or state = FLUSHING )
+               and cycles_counter > LATENCY and (valid_in = '1' or cycles_counter >= TOTAL_PIX) then
+                if col_sig = N - 1 then
+            
+                    col_sig <= (others => '0');
+                    row_sig <= row_sig + 1;
+                else
+                    col_sig <= col_sig + 1;
+                end if;
+            end if; 
+        end if;
+    end process;
+
+    valid_out <= '1' when (state = RECEIVING or state = FLUSHING)
+                      and cycles_counter >= LATENCY + 2  -- LATENCY    : natural := 2 * N + 2;  2*8 + 2 + 3 = 21cycles
+                      and cycles_counter < TOTAL_PIX + LATENCY + 2   -- TOTAL_PIX  : natural := N * N; 8*8 + 18 + 3 = 85 cycles 
+                      and (valid_in = '1' or cycles_counter >= TOTAL_PIX)
+                 else  '0';
+           
+                 
+
+    image_finished <= '1'  when cycles_counter = TOTAL_PIX + LATENCY + 1   
+    else '0';
+
+    s2p_inst : serial_parallel
+        generic map ( bits => bits, N => N )
+        port map (
+            clk => clka, rst => rst_n,
+            pixel_in  => pixel,
+            valid_in  => valid_in,
+            new_image => new_image,
+            row     => std_logic_vector(row_sig),
+            col     => std_logic_vector(col_sig),
+            counter => std_logic_vector(cycles_counter),
+            p1 => p1, p2 => p2, p3 => p3,
+            p4 => p4, p5 => p5, p6 => p6,
+            p7 => p7, p8 => p8, p9 => p9
+        );
+
+    piproc_inst : pixel_processor
+        generic map ( bits => bits, N => N )
+        port map (
+            clk => clk, rst => rst_n,
+            row => std_logic_vector(row_sig),
+            col => std_logic_vector(col_sig),
+            p1 => p1, p2 => p2, p3 => p3,
+            p4 => p4, p5 => p5, p6 => p6,
+            p7 => p7, p8 => p8, p9 => p9,
+            R => R, G => G, B => B
+        );
+
+end debayering_arch;
